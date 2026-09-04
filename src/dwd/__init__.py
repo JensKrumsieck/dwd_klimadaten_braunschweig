@@ -95,6 +95,37 @@ def plot_warming_stripes(
         plt.close(fig)
 
 
+def plot_warming_stripes_uniform(
+    df: pl.DataFrame, save_path: str = "warming_stripes_uniform.png"
+) -> None:
+    df = (
+        df.group_by("year")
+        .agg(pl.col("temperature_air_mean_2m").mean())
+        .drop_nulls("temperature_air_mean_2m")
+        .sort("year")
+    )
+    years = df["year"].to_numpy()
+    temps = df["temperature_air_mean_2m"].to_numpy()
+    baseline = df.filter(pl.col("year").is_between(1971, 2000))[
+        "temperature_air_mean_2m"
+    ]
+    anomaly = temps - baseline.mean()
+
+    with plt.rc_context({"text.usetex": False}):
+        fig, ax = plt.subplots(figsize=(len(years) * 0.08, 4))
+        ax.bar(
+            years,
+            [1] * len(years),
+            width=1.0,
+            color=plt.cm.RdBu_r(anomaly / (4 * temps.std()) + 0.5),
+        )
+        ax.set_axis_off()
+        ax.set_xlim(years.min() - 0.5, years.max() + 0.5)
+        ax.set_ylim(0, 1)
+        fig.savefig(save_path, dpi=150, bbox_inches="tight", pad_inches=0)
+        plt.close(fig)
+
+
 def _combine_stations(
     df: pl.DataFrame, columns: list[str], time_col: str
 ) -> pl.DataFrame:
@@ -225,6 +256,7 @@ def main():
     df_yearly = get_yearly_observations()
     df_yearly.to_pandas().to_csv("dwd_yearly_observations.csv", index=False)
     plot_warming_stripes(df_yearly, save_path="warming_stripes.png")
+    plot_warming_stripes_uniform(df_yearly, save_path="warming_stripes_uniform.png")
 
     df_decade = get_decade_observations(df_yearly)
     df_decade.to_pandas().to_csv("dwd_decade_observations.csv", index=False)
