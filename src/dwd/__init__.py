@@ -1,8 +1,17 @@
+import io
+import urllib.request
+
 from wetterdienst.provider.dwd.observation import DwdObservationRequest
 import polars as pl
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import scienceplots
+
+GERMANY_REGIONAL_AVERAGES_URL = (
+    "https://opendata.dwd.de/climate_environment/CDC/regional_averages_DE/"
+    "annual/air_temperature_mean/regional_averages_tm_year.txt"
+)
 
 plt.style.use(["science", "no-latex", "nature"])
 
@@ -53,6 +62,61 @@ def get_decade_observations(df_yearly: pl.DataFrame | None = None) -> pl.DataFra
         .group_by("station_id", "decade")
         .agg(pl.exclude("station_id", "year", "decade").mean())
         .sort("station_id", "decade")
+    )
+
+
+def get_germany_yearly_temperature() -> pl.DataFrame:
+    request = urllib.request.Request(
+        GERMANY_REGIONAL_AVERAGES_URL, headers={"User-Agent": "Mozilla/5.0"}
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        text = response.read().decode("latin-1")
+    df = pl.read_csv(io.StringIO(text), separator=";", skip_rows=1, truncate_ragged_lines=True)
+    return df.select(
+        pl.col("Jahr").alias("year"),
+        pl.col("Deutschland").str.strip_chars().cast(pl.Float64).alias("temperature_germany"),
+        pl.col("Niedersachsen").str.strip_chars().cast(pl.Float64).alias("temperature_niedersachsen"),
+    )
+
+
+def get_germany_decade_temperature(
+    df_germany_yearly: pl.DataFrame | None = None,
+) -> pl.DataFrame:
+    df = df_germany_yearly if df_germany_yearly is not None else get_germany_yearly_temperature()
+    return (
+        df.with_columns((pl.col("year") // 10 * 10).alias("decade"))
+        .group_by("decade")
+        .agg(pl.exclude("year", "decade").mean())
+        .sort("decade")
+    )
+
+
+HANNOVER_STATION_ID = "02014"
+
+
+def get_hannover_yearly_temperature() -> pl.DataFrame:
+    request = DwdObservationRequest(
+        parameters=[("annual", "climate_summary", "temperature_air_mean_2m")],
+        start_date="1800-01-01",
+        end_date="2026-09-04",
+    ).filter_by_station_id(station_id=[HANNOVER_STATION_ID])
+    df = request.values.all().df
+    return (
+        df.with_columns(pl.col("date").dt.year().alias("year"))
+        .select("year", pl.col("value").alias("temperature_hannover"))
+        .sort("year")
+    )
+
+
+def get_hannover_decade_temperature(
+    df_hannover_yearly: pl.DataFrame | None = None,
+) -> pl.DataFrame:
+    df = df_hannover_yearly if df_hannover_yearly is not None else get_hannover_yearly_temperature()
+    return (
+        df.with_columns((pl.col("year") // 10 * 10).alias("decade"))
+        .group_by("decade")
+        .agg(pl.exclude("year", "decade").mean())
+        .sort("decade")
     )
 
 
@@ -141,19 +205,36 @@ def plot_lines(
     save_path: str,
     annotate: tuple[float, str] | None = None,
     labels: dict[str, str] | None = None,
+    mask_x: float | None = None,
+    mask_alpha: float = 0.35,
+    mask_columns: list[str] | None = None,
 ) -> None:
     data = _combine_stations(df, columns, time_col)
     with plt.rc_context({"text.usetex": False}):
         fig, ax = plt.subplots(figsize=(10, 4))
         for column in columns:
             series = data.drop_nulls(column)
-            ax.plot(
+            apply_mask = mask_x is not None and (mask_columns is None or column in mask_columns)
+            time_values = series[time_col].to_list()
+            markevery = [i for i, x in enumerate(time_values) if x != mask_x]
+            (line,) = ax.plot(
                 series[time_col],
                 series[column],
                 marker="o",
                 markersize=3,
+                markevery=markevery if apply_mask else None,
                 label=(labels or {}).get(column, column),
             )
+            if apply_mask and mask_x in time_values:
+                masked = series.filter(pl.col(time_col) == mask_x)
+                ax.plot(
+                    masked[time_col],
+                    masked[column],
+                    marker="o",
+                    markersize=3,
+                    color=line.get_color(),
+                    alpha=mask_alpha,
+                )
         ax.set_ylabel(ylabel)
         ax.set_title(title)
         ax.legend()
@@ -201,6 +282,7 @@ def plot_count_days(df_yearly, df_decade) -> None:
         "count_days_decade.png",
         annotate=(1950, note),
         labels=labels,
+        mask_x=1950,
     )
 
 
@@ -227,6 +309,7 @@ def plot_temperatures(df_yearly, df_decade) -> None:
         "temperatures_decade.png",
         annotate=(1950, note),
         labels=labels,
+        mask_x=1950,
     )
     last_50_years = df_yearly.filter(pl.col("year") >= df_yearly["year"].max() - 49)
     plot_lines(
@@ -252,6 +335,76 @@ def plot_temperatures(df_yearly, df_decade) -> None:
     )
 
 
+def plot_temperature_comparison(
+    df_decade: pl.DataFrame,
+    df_germany_decade: pl.DataFrame,
+    df_hannover_decade: pl.DataFrame,
+    save_path: str = "temperature_comparison_decade.png",
+) -> None:
+    braunschweig = _combine_stations(df_decade, ["temperature_air_mean_2m"], "decade")
+    combined = braunschweig.join(df_germany_decade, on="decade", how="inner").join(
+        df_hannover_decade, on="decade", how="inner"
+    )
+    columns = [
+        "temperature_air_mean_2m",
+        "temperature_hannover",
+        "temperature_niedersachsen",
+        "temperature_germany",
+    ]
+    labels = {
+        "temperature_air_mean_2m": "Braunschweig",
+        "temperature_hannover": "Hannover",
+        "temperature_niedersachsen": "Niedersachsen",
+        "temperature_germany": "Deutschland",
+    }
+    plot_lines(
+        combined,
+        columns,
+        "decade",
+        "Temperatur / °C",
+        "Jahresmitteltemperatur je Dekade – Braunschweig vs. Hannover vs. Niedersachsen vs. Deutschland",
+        save_path,
+        annotate=(1950, "Stationswechsel: Innenstadt → Stadtrand"),
+        labels=labels,
+        mask_x=1950,
+        mask_columns=["temperature_air_mean_2m"],
+    )
+
+
+def plot_temperature_regression(
+    df_decade: pl.DataFrame,
+    save_path: str = "temperature_regression_decade.png",
+    fit_from: int = 1960,
+    xlim: tuple[int, int] = (1960, 2050),
+) -> None:
+    data = _combine_stations(df_decade, ["temperature_air_mean_2m"], "decade").drop_nulls(
+        "temperature_air_mean_2m"
+    )
+    fit_data = data.filter(pl.col("decade") >= fit_from)
+    decades = fit_data["decade"].to_numpy()
+    temps = fit_data["temperature_air_mean_2m"].to_numpy()
+    slope, intercept = np.polyfit(decades, temps, 1)
+
+    with plt.rc_context({"text.usetex": False}):
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(
+            fit_data["decade"], fit_data["temperature_air_mean_2m"],
+            marker="o", markersize=4, linestyle="none", color="tab:blue",
+            label="Braunschweig – Jahresmitteltemperatur je Dekade",
+        )
+        regression_x = np.array(xlim)
+        ax.plot(
+            regression_x, slope * regression_x + intercept,
+            linestyle="--", color="tab:red", label="lineare Regression",
+        )
+        ax.set_xlim(*xlim)
+        ax.set_ylabel("Temperatur / °C")
+        ax.set_title("Braunschweig – Trend der Jahresmitteltemperatur je Dekade (ab 1960)")
+        ax.legend()
+        fig.savefig(save_path, dpi=150, bbox_inches="tight", pad_inches=0.1)
+        plt.close(fig)
+
+
 def main():
     df_yearly = get_yearly_observations()
     df_yearly.to_pandas().to_csv("dwd_yearly_observations.csv", index=False)
@@ -266,6 +419,17 @@ def main():
         df_yearly,
         df_decade,
     )
+
+    df_germany_yearly = get_germany_yearly_temperature()
+    df_germany_yearly.to_pandas().to_csv("germany_yearly_temperature.csv", index=False)
+    df_germany_decade = get_germany_decade_temperature(df_germany_yearly)
+
+    df_hannover_yearly = get_hannover_yearly_temperature()
+    df_hannover_yearly.to_pandas().to_csv("hannover_yearly_temperature.csv", index=False)
+    df_hannover_decade = get_hannover_decade_temperature(df_hannover_yearly)
+
+    plot_temperature_comparison(df_decade, df_germany_decade, df_hannover_decade)
+    plot_temperature_regression(df_decade)
 
 
 if __name__ == "__main__":
