@@ -71,18 +71,30 @@ def get_germany_yearly_temperature() -> pl.DataFrame:
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         text = response.read().decode("latin-1")
-    df = pl.read_csv(io.StringIO(text), separator=";", skip_rows=1, truncate_ragged_lines=True)
+    df = pl.read_csv(
+        io.StringIO(text), separator=";", skip_rows=1, truncate_ragged_lines=True
+    )
     return df.select(
         pl.col("Jahr").alias("year"),
-        pl.col("Deutschland").str.strip_chars().cast(pl.Float64).alias("temperature_germany"),
-        pl.col("Niedersachsen").str.strip_chars().cast(pl.Float64).alias("temperature_niedersachsen"),
+        pl.col("Deutschland")
+        .str.strip_chars()
+        .cast(pl.Float64)
+        .alias("temperature_germany"),
+        pl.col("Niedersachsen")
+        .str.strip_chars()
+        .cast(pl.Float64)
+        .alias("temperature_niedersachsen"),
     )
 
 
 def get_germany_decade_temperature(
     df_germany_yearly: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
-    df = df_germany_yearly if df_germany_yearly is not None else get_germany_yearly_temperature()
+    df = (
+        df_germany_yearly
+        if df_germany_yearly is not None
+        else get_germany_yearly_temperature()
+    )
     return (
         df.with_columns((pl.col("year") // 10 * 10).alias("decade"))
         .group_by("decade")
@@ -111,7 +123,11 @@ def get_hannover_yearly_temperature() -> pl.DataFrame:
 def get_hannover_decade_temperature(
     df_hannover_yearly: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
-    df = df_hannover_yearly if df_hannover_yearly is not None else get_hannover_yearly_temperature()
+    df = (
+        df_hannover_yearly
+        if df_hannover_yearly is not None
+        else get_hannover_yearly_temperature()
+    )
     return (
         df.with_columns((pl.col("year") // 10 * 10).alias("decade"))
         .group_by("decade")
@@ -214,7 +230,9 @@ def plot_lines(
         fig, ax = plt.subplots(figsize=(10, 4))
         for column in columns:
             series = data.drop_nulls(column)
-            apply_mask = mask_x is not None and (mask_columns is None or column in mask_columns)
+            apply_mask = mask_x is not None and (
+                mask_columns is None or column in mask_columns
+            )
             time_values = series[time_col].to_list()
             markevery = [i for i, x in enumerate(time_values) if x != mask_x]
             (line,) = ax.plot(
@@ -256,6 +274,35 @@ def plot_lines(
         plt.close(fig)
 
 
+def plot_count_days2(df_yearly, df_decade) -> None:
+    columns = ["count_days_hot"]
+    labels = {
+        "count_days_hot": "Heiße Tage (Tmax ≥ 30 °C)",
+    }
+    note = "Stationswechsel: Innenstadt → Stadtrand"
+    plot_lines(
+        df_yearly,
+        columns,
+        "year",
+        "Anzahl Tage",
+        "Heiße Tage - jährlich",
+        "count_days_yearly2.png",
+        annotate=(1953, note),
+        labels=labels,
+    )
+    plot_lines(
+        df_decade,
+        columns,
+        "decade",
+        "Anzahl Tage",
+        "Heiße Tage - je Dekade",
+        "count_days_decade2.png",
+        annotate=(1950, note),
+        labels=labels,
+        mask_x=1950,
+    )
+
+
 def plot_count_days(df_yearly, df_decade) -> None:
     columns = ["count_days_hot", "count_days_summer"]
     labels = {
@@ -268,7 +315,7 @@ def plot_count_days(df_yearly, df_decade) -> None:
         columns,
         "year",
         "Anzahl Tage",
-        "Heiße Tage & Sommertage – jährlich",
+        "Heiße Tage & Sommertage - jährlich",
         "count_days_yearly.png",
         annotate=(1953, note),
         labels=labels,
@@ -278,7 +325,7 @@ def plot_count_days(df_yearly, df_decade) -> None:
         columns,
         "decade",
         "Anzahl Tage",
-        "Heiße Tage & Sommertage – je Dekade",
+        "Heiße Tage & Sommertage - je Dekade",
         "count_days_decade.png",
         annotate=(1950, note),
         labels=labels,
@@ -295,7 +342,7 @@ def plot_temperatures(df_yearly, df_decade) -> None:
         columns,
         "year",
         "Temperatur / °C",
-        "Temperaturen – jährlich",
+        "Temperaturen - jährlich",
         "temperatures_yearly.png",
         annotate=(1953, note),
         labels=labels,
@@ -305,7 +352,7 @@ def plot_temperatures(df_yearly, df_decade) -> None:
         columns,
         "decade",
         "Temperatur / °C",
-        "Temperaturen – je Dekade",
+        "Temperaturen - je Dekade",
         "temperatures_decade.png",
         annotate=(1950, note),
         labels=labels,
@@ -317,7 +364,7 @@ def plot_temperatures(df_yearly, df_decade) -> None:
         columns,
         "year",
         "Temperatur / °C",
-        "Temperaturen – letzte 50 Jahre",
+        "Temperaturen - letzte 50 Jahre",
         "temperatures_last50y.png",
         labels=labels,
     )
@@ -329,7 +376,7 @@ def plot_temperatures(df_yearly, df_decade) -> None:
         columns,
         "decade",
         "Temperatur / °C",
-        "Temperaturen – Dekaden der letzten 50 Jahre",
+        "Temperaturen - Dekaden der letzten 50 Jahre",
         "temperatures_decade_last50y.png",
         labels=labels,
     )
@@ -362,7 +409,7 @@ def plot_temperature_comparison(
         columns,
         "decade",
         "Temperatur / °C",
-        "Jahresmitteltemperatur je Dekade – Braunschweig vs. Hannover vs. Niedersachsen vs. Deutschland",
+        "Jahresmitteltemperatur je Dekade - Braunschweig vs. Hannover vs. Niedersachsen vs. Deutschland",
         save_path,
         annotate=(1950, "Stationswechsel: Innenstadt → Stadtrand"),
         labels=labels,
@@ -377,9 +424,9 @@ def plot_temperature_regression(
     fit_from: int = 1960,
     xlim: tuple[int, int] = (1960, 2050),
 ) -> None:
-    data = _combine_stations(df_decade, ["temperature_air_mean_2m"], "decade").drop_nulls(
-        "temperature_air_mean_2m"
-    )
+    data = _combine_stations(
+        df_decade, ["temperature_air_mean_2m"], "decade"
+    ).drop_nulls("temperature_air_mean_2m")
     fit_data = data.filter(pl.col("decade") >= fit_from)
     decades = fit_data["decade"].to_numpy()
     temps = fit_data["temperature_air_mean_2m"].to_numpy()
@@ -388,18 +435,27 @@ def plot_temperature_regression(
     with plt.rc_context({"text.usetex": False}):
         fig, ax = plt.subplots(figsize=(10, 4))
         ax.plot(
-            fit_data["decade"], fit_data["temperature_air_mean_2m"],
-            marker="o", markersize=4, linestyle="none", color="tab:blue",
-            label="Braunschweig – Jahresmitteltemperatur je Dekade",
+            fit_data["decade"],
+            fit_data["temperature_air_mean_2m"],
+            marker="o",
+            markersize=4,
+            linestyle="none",
+            color="tab:blue",
+            label="Braunschweig - Jahresmitteltemperatur je Dekade",
         )
         regression_x = np.array(xlim)
         ax.plot(
-            regression_x, slope * regression_x + intercept,
-            linestyle="--", color="tab:red", label="lineare Regression",
+            regression_x,
+            slope * regression_x + intercept,
+            linestyle="--",
+            color="tab:red",
+            label="lineare Regression",
         )
         ax.set_xlim(*xlim)
         ax.set_ylabel("Temperatur / °C")
-        ax.set_title("Braunschweig – Trend der Jahresmitteltemperatur je Dekade (ab 1960)")
+        ax.set_title(
+            "Braunschweig - Trend der Jahresmitteltemperatur je Dekade (ab 1960)"
+        )
         ax.legend()
         fig.savefig(save_path, dpi=150, bbox_inches="tight", pad_inches=0.1)
         plt.close(fig)
@@ -415,6 +471,7 @@ def main():
     df_decade.to_pandas().to_csv("dwd_decade_observations.csv", index=False)
 
     plot_count_days(df_yearly, df_decade)
+    plot_count_days2(df_yearly, df_decade)
     plot_temperatures(
         df_yearly,
         df_decade,
@@ -425,7 +482,9 @@ def main():
     df_germany_decade = get_germany_decade_temperature(df_germany_yearly)
 
     df_hannover_yearly = get_hannover_yearly_temperature()
-    df_hannover_yearly.to_pandas().to_csv("hannover_yearly_temperature.csv", index=False)
+    df_hannover_yearly.to_pandas().to_csv(
+        "hannover_yearly_temperature.csv", index=False
+    )
     df_hannover_decade = get_hannover_decade_temperature(df_hannover_yearly)
 
     plot_temperature_comparison(df_decade, df_germany_decade, df_hannover_decade)
